@@ -1,5 +1,28 @@
 # Changelog
 
+## 1.2.0 — 2026-04-24
+
+### 🐛 Bug 修复
+- 🔧 修复流式模式下 `reasoning_content` 被 `\n---\n` 分隔符污染的问题（chunk 直接拼接，非 chunk 多轮推理用分隔符）
+- 🔧 修复 `full_agent_loop` 记录层级与 `reasoning_and_tools` 行为无区别的问题（新增 `_should_record_all` 属性，三级明确区分）
+- 🔧 简化非管理员查询记录时的冗余条件判断
+- 🔧 `_format_session_source` 异常捕获从 `except Exception` 收窄为 `except (ValueError, IndexError)`
+
+### ✨ 新功能
+- 🆕 新增 `/think_clear`（别名 `/清除思考`）命令，支持清除思考记录
+- 🆕 新增 `/think_search`（别名 `/搜索思考`）命令，支持按关键词搜索记录
+- 🆕 新增持久化存储，记录保存到 `think_records.json`，重启不丢失
+- 🆕 新增命令冷却机制（10 秒/会话），防止高频调用
+- 🆕 新增用户消息脱敏处理，非管理员查看时中间内容用 `***` 替代
+
+### 🧹 改进
+- 🧹 pending 清理策略优化：数量低于阈值（50）时跳过清理，避免每次 LLM 响应都遍历
+- 🧹 `interaction_id` 改用 `uuid4` 生成，通过 `event.get_extra/set_extra` 缓存保证一致性
+- 🧹 `@register` 装饰器新增 `repo` 参数
+- 🧹 `tool`/`tool_args`/`tool_result` 参数添加 `Any` 类型注解
+- 🧹 `_conf_schema.json` 中 `"type": "int"` 修正为 `"type": "integer"`
+- 🧹 新增 `.gitignore` 排除运行时数据文件
+
 ## 1.1.0 — 2026-04-24
 
 ### 🐛 Bug 修复
