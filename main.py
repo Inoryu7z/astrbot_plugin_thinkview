@@ -91,7 +91,7 @@ class ThinkRecord:
     "astrbot_plugin_thinkview",
     "Inoryu7z",
     "查看 bot 的思考记录，支持中转群配置",
-    "1.2.1",
+    "1.3.0",
     repo="https://github.com/Inoryu7z/astrbot_plugin_thinkview",
 )
 class ThinkViewPlugin(Star):
@@ -334,7 +334,6 @@ class ThinkViewPlugin(Star):
             yield event.plain_result("暂无思考记录。")
             return
 
-        relay_session = self.relay_conf.get("relay_session", "")
         output_parts = []
         for i, record in enumerate(reversed(records)):
             idx = len(records) - i
@@ -342,13 +341,50 @@ class ThinkViewPlugin(Star):
 
         output = "\n\n".join(output_parts)
 
-        if relay_session:
+        force_local = self.display_conf.get("force_local_output", False)
+        relay_session = self.relay_conf.get("relay_session", "")
+
+        if relay_session and not force_local:
             await self._relay_to_group(relay_session, output)
             yield event.plain_result("思考记录已发送到中转群。")
         else:
             if len(output) > _TRUNC_OUTPUT:
                 output = output[:_TRUNC_OUTPUT - 100] + "\n\n... (内容过长已截断)"
             yield event.plain_result(output)
+
+    @filter.command("think_here", alias={"思考这里"})
+    async def think_here_command(self, event: AstrMessageEvent, n: int = 1):
+        remaining = self._check_cooldown(event.unified_msg_origin)
+        if remaining > 0:
+            yield event.plain_result(f"命令冷却中，请 {remaining} 秒后再试。")
+            return
+
+        n = max(1, min(n, _MAX_QUERY_N))
+        is_admin = event.is_admin()
+
+        if is_admin:
+            all_records = []
+            for session_records in self._records.values():
+                all_records.extend(session_records)
+            all_records.sort(key=lambda r: r.timestamp, reverse=True)
+            records = all_records[:n]
+        else:
+            session_records = self._get_session_records(event.unified_msg_origin)
+            records = list(session_records)[-n:]
+
+        if not records:
+            yield event.plain_result("暂无思考记录。")
+            return
+
+        output_parts = []
+        for i, record in enumerate(reversed(records)):
+            idx = len(records) - i
+            output_parts.append(self._format_record(record, idx, sanitize=not is_admin))
+
+        output = "\n\n".join(output_parts)
+        if len(output) > _TRUNC_OUTPUT:
+            output = output[:_TRUNC_OUTPUT - 100] + "\n\n... (内容过长已截断)"
+        yield event.plain_result(output)
 
     @filter.command("think_clear", alias={"清除思考"})
     async def think_clear_command(self, event: AstrMessageEvent):
@@ -407,10 +443,17 @@ class ThinkViewPlugin(Star):
             output_parts.append(self._format_record(record, i, sanitize=not is_admin))
 
         output = "\n\n".join(output_parts)
-        if len(output) > _TRUNC_OUTPUT:
-            output = output[:_TRUNC_OUTPUT - 100] + "\n\n... (内容过长已截断)"
 
-        yield event.plain_result(output)
+        force_local = self.display_conf.get("force_local_output", False)
+        relay_session = self.relay_conf.get("relay_session", "")
+
+        if relay_session and not force_local:
+            await self._relay_to_group(relay_session, output)
+            yield event.plain_result("搜索结果已发送到中转群。")
+        else:
+            if len(output) > _TRUNC_OUTPUT:
+                output = output[:_TRUNC_OUTPUT - 100] + "\n\n... (内容过长已截断)"
+            yield event.plain_result(output)
 
     @staticmethod
     def _validate_session_format(session_str: str) -> bool:

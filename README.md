@@ -45,6 +45,7 @@
 | 指令 | 别名 | 权限 | 说明 |
 |------|------|------|------|
 | `/think` | `/思考` | 所有人 | 查看最近的思考记录，支持 `/think 3` 查看最近 3 条 |
+| `/think_here` | `/思考这里` | 所有人 | 强制输出到当前对话，无视中转群配置，支持 `/think_here 3` |
 | `/think_clear` | `/清除思考` | 所有人 | 清除思考记录（普通用户仅清除当前会话，管理员清除全部） |
 | `/think_search` | `/搜索思考` | 所有人 | 按关键词搜索思考记录，如 `/think_search 天气` |
 
@@ -75,6 +76,7 @@
 | `show_reply_summary` | 展示回复摘要 | `true` |
 | `show_timestamp` | 展示时间戳 | `true` |
 | `show_session_source` | 展示会话来源 | `true` |
+| `force_local_output` | 强制本地输出（指令结果不发中转群，自动转发不受影响） | `false` |
 
 ---
 
