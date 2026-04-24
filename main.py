@@ -2,7 +2,6 @@ import time
 from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Optional
 
 from astrbot.api import AstrBotConfig, logger
 from astrbot.api.event import AstrMessageEvent, MessageChain, filter
@@ -10,28 +9,37 @@ from astrbot.api.message_components import Plain
 from astrbot.api.provider import LLMResponse
 from astrbot.api.star import Context, Star, register
 
+_TRUNC_USER_MSG = 200
+_TRUNC_ARGS = 100
+_TRUNC_RESULT = 150
+_TRUNC_REPLY = 200
+_TRUNC_OUTPUT = 4000
+_MAX_QUERY_N = 20
+_PENDING_TTL = 300
+
 
 @dataclass
 class ToolCallEntry:
     tool_name: str = ""
     args_summary: str = ""
     result_summary: str = ""
+    result_matched: bool = False
 
 
 @dataclass
 class ThinkRecord:
-    interaction_id: float = 0.0
+    interaction_id: str = ""
     session: str = ""
     timestamp: float = 0.0
     user_message: str = ""
     reply_summary: str = ""
     reasoning_content: str = ""
-    tool_calls: list = field(default_factory=list)
+    tool_calls: list[ToolCallEntry] = field(default_factory=list)
     has_thinking: bool = False
     confirmed: bool = False
 
 
-@register("astrbot_plugin_thinkview", "Inoryu7z", "查看 bot 的思考记录，支持中转群配置", "1.0.0")
+@register("astrbot_plugin_thinkview", "Inoryu7z", "查看 bot 的思考记录，支持中转群配置", "1.1.0")
 class ThinkViewPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
@@ -44,30 +52,59 @@ class ThinkViewPlugin(Star):
         self._records: dict[str, deque[ThinkRecord]] = {}
         self._max_records = max(10, max_records)
 
-        self._pending: dict[float, ThinkRecord] = {}
-        self._pending_tools: dict[float, list[ToolCallEntry]] = {}
+        self._pending: dict[str, ThinkRecord] = {}
+        self._pending_tools: dict[str, list[ToolCallEntry]] = {}
+        self._pending_timestamps: dict[str, float] = {}
+
+    @property
+    def _record_level(self) -> str:
+        return self.basic_conf.get("record_level", "reasoning_only")
+
+    @property
+    def _should_record_tools(self) -> bool:
+        return self._record_level in ("reasoning_and_tools", "full_agent_loop")
+
+    @staticmethod
+    def _make_interaction_id(event: AstrMessageEvent) -> str:
+        return f"{event.created_at}:{id(event)}"
 
     def _get_session_records(self, session: str) -> deque[ThinkRecord]:
         if session not in self._records:
             self._records[session] = deque(maxlen=self._max_records)
         return self._records[session]
 
-    def _get_or_create_pending(self, interaction_id: float, session: str) -> ThinkRecord:
+    def _get_or_create_pending(self, interaction_id: str, session: str) -> ThinkRecord:
         if interaction_id not in self._pending:
             self._pending[interaction_id] = ThinkRecord(
                 interaction_id=interaction_id,
                 session=session,
                 timestamp=time.time(),
             )
+            self._pending_timestamps[interaction_id] = time.time()
         return self._pending[interaction_id]
+
+    def _cleanup_stale_pending(self):
+        now = time.time()
+        stale_ids = [
+            iid for iid, ts in self._pending_timestamps.items()
+            if now - ts > _PENDING_TTL
+        ]
+        for iid in stale_ids:
+            self._pending.pop(iid, None)
+            self._pending_tools.pop(iid, None)
+            self._pending_timestamps.pop(iid, None)
+        if stale_ids:
+            logger.debug(f"[ThinkView] 清理了 {len(stale_ids)} 条过期 pending 记录")
 
     @filter.on_llm_response()
     async def on_llm_response(self, event: AstrMessageEvent, response: LLMResponse):
-        interaction_id = event.created_at
+        self._cleanup_stale_pending()
+
+        interaction_id = self._make_interaction_id(event)
         session = event.unified_msg_origin
 
         record = self._get_or_create_pending(interaction_id, session)
-        record.user_message = event.message_str[:200] if event.message_str else ""
+        record.user_message = event.message_str[:_TRUNC_USER_MSG] if event.message_str else ""
         record.session = session
 
         if response.reasoning_content:
@@ -77,26 +114,21 @@ class ThinkViewPlugin(Star):
                 record.reasoning_content = response.reasoning_content
             record.has_thinking = True
 
-        if not record.has_thinking:
-            record.has_thinking = False
-
-        record_level = self.basic_conf.get("record_level", "reasoning_only")
-        if record_level in ("reasoning_and_tools", "full_agent_loop"):
+        if self._should_record_tools:
             if interaction_id not in self._pending_tools:
                 self._pending_tools[interaction_id] = []
 
     @filter.on_using_llm_tool()
     async def on_using_llm_tool(self, event: AstrMessageEvent, tool, tool_args):
-        record_level = self.basic_conf.get("record_level", "reasoning_only")
-        if record_level not in ("reasoning_and_tools", "full_agent_loop"):
+        if not self._should_record_tools:
             return
 
-        interaction_id = event.created_at
+        interaction_id = self._make_interaction_id(event)
         if interaction_id not in self._pending_tools:
             self._pending_tools[interaction_id] = []
 
         args_str = str(tool_args)
-        args_summary = args_str[:100] + "..." if len(args_str) > 100 else args_str
+        args_summary = args_str[:_TRUNC_ARGS] + "..." if len(args_str) > _TRUNC_ARGS else args_str
 
         tool_name = getattr(tool, "name", str(tool))
 
@@ -108,39 +140,44 @@ class ThinkViewPlugin(Star):
 
     @filter.on_llm_tool_respond()
     async def on_llm_tool_respond(self, event: AstrMessageEvent, tool, tool_args, tool_result):
-        record_level = self.basic_conf.get("record_level", "reasoning_only")
-        if record_level not in ("reasoning_and_tools", "full_agent_loop"):
+        if not self._should_record_tools:
             return
 
-        interaction_id = event.created_at
+        interaction_id = self._make_interaction_id(event)
         if interaction_id not in self._pending_tools:
             return
 
         result_str = str(tool_result)
-        result_summary = result_str[:150] + "..." if len(result_str) > 150 else result_str
+        result_summary = result_str[:_TRUNC_RESULT] + "..." if len(result_str) > _TRUNC_RESULT else result_str
 
         tool_name = getattr(tool, "name", str(tool))
-        for entry in reversed(self._pending_tools[interaction_id]):
-            if entry.tool_name == tool_name and not entry.result_summary:
+        for entry in self._pending_tools[interaction_id]:
+            if entry.tool_name == tool_name and not entry.result_matched:
                 entry.result_summary = result_summary
+                entry.result_matched = True
                 break
 
     @filter.after_message_sent()
     async def after_message_sent(self, event: AstrMessageEvent):
-        interaction_id = event.created_at
+        interaction_id = self._make_interaction_id(event)
         if interaction_id not in self._pending:
             return
 
         record = self._pending.pop(interaction_id)
+        self._pending_timestamps.pop(interaction_id, None)
+
+        if self._record_level == "reasoning_only" and not record.has_thinking:
+            self._pending_tools.pop(interaction_id, None)
+            return
+
         record.confirmed = True
 
         result = event.get_result()
         if result and result.chain:
-            reply_text = ""
-            for comp in result.chain:
-                if isinstance(comp, Plain):
-                    reply_text += comp.text
-            record.reply_summary = reply_text[:200] if reply_text else ""
+            reply_text = "".join(
+                comp.text for comp in result.chain if isinstance(comp, Plain)
+            )
+            record.reply_summary = reply_text[:_TRUNC_REPLY] if reply_text else ""
 
         if interaction_id in self._pending_tools:
             record.tool_calls = self._pending_tools.pop(interaction_id)
@@ -156,8 +193,7 @@ class ThinkViewPlugin(Star):
 
     @filter.command("think", alias={"思考"})
     async def think_command(self, event: AstrMessageEvent, n: int = 1):
-        if n < 1:
-            n = 1
+        n = max(1, min(n, _MAX_QUERY_N))
 
         is_admin = event.is_admin()
 
@@ -186,11 +222,21 @@ class ThinkViewPlugin(Star):
 
         if relay_session:
             await self._relay_to_group(relay_session, output)
-            yield event.plain_result(f"思考记录已发送到中转群。")
+            yield event.plain_result("思考记录已发送到中转群。")
         else:
-            if len(output) > 4000:
-                output = output[:3900] + "\n\n... (内容过长已截断)"
+            if len(output) > _TRUNC_OUTPUT:
+                output = output[:_TRUNC_OUTPUT - 100] + "\n\n... (内容过长已截断)"
             yield event.plain_result(output)
+
+    @staticmethod
+    def _format_tool_calls(tool_calls: list[ToolCallEntry]) -> str:
+        lines = []
+        for tc in tool_calls:
+            line = f"🔧 {tc.tool_name}({tc.args_summary})"
+            if tc.result_summary:
+                line += f" → {tc.result_summary}"
+            lines.append(line)
+        return "\n".join(lines)
 
     def _format_record(self, record: ThinkRecord, idx: int = 1) -> str:
         parts = [f"🤔 思考记录 #{idx}"]
@@ -211,23 +257,16 @@ class ThinkViewPlugin(Star):
 
         if record.has_thinking and record.reasoning_content:
             parts.append(f"\n🧠 思考过程:\n{record.reasoning_content}")
-        else:
-            parts.append("\n🧠 思考过程: (无思考内容)")
 
         if record.tool_calls:
-            tool_parts = []
-            for tc in record.tool_calls:
-                if isinstance(tc, ToolCallEntry):
-                    line = f"🔧 {tc.tool_name}({tc.args_summary})"
-                    if tc.result_summary:
-                        line += f" → {tc.result_summary}"
-                    tool_parts.append(line)
-            if tool_parts:
-                parts.append("\n" + "\n".join(tool_parts))
+            tool_text = self._format_tool_calls(record.tool_calls)
+            if tool_text:
+                parts.append("\n" + tool_text)
 
         return "\n".join(parts)
 
-    def _format_session_source(self, session: str) -> str:
+    @staticmethod
+    def _format_session_source(session: str) -> str:
         try:
             parts = session.split(":", 2)
             if len(parts) >= 3:
@@ -258,19 +297,14 @@ class ThinkViewPlugin(Star):
 
         if record.has_thinking and record.reasoning_content:
             output += f"🧠 思考过程:\n{record.reasoning_content}"
-        else:
-            output += "🧠 思考过程: (无思考内容)"
 
         if record.tool_calls:
-            tool_parts = []
-            for tc in record.tool_calls:
-                if isinstance(tc, ToolCallEntry):
-                    line = f"🔧 {tc.tool_name}({tc.args_summary})"
-                    if tc.result_summary:
-                        line += f" → {tc.result_summary}"
-                    tool_parts.append(line)
-            if tool_parts:
-                output += "\n" + "\n".join(tool_parts)
+            tool_text = self._format_tool_calls(record.tool_calls)
+            if tool_text:
+                output += "\n" + tool_text
+
+        if len(output) > _TRUNC_OUTPUT:
+            output = output[:_TRUNC_OUTPUT - 100] + "\n\n... (内容过长已截断)"
 
         await self._relay_to_group(relay_session, output)
 
