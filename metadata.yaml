@@ -1,6 +1,6 @@
 name: astrbot_plugin_thinkview
 display_name: 思维透镜
-version: 1.2.0
+version: 1.2.1
 description: 查看 bot 的思考记录，支持中转群配置
 author: Inoryu7z
 repo: https://github.com/Inoryu7z/astrbot_plugin_thinkview

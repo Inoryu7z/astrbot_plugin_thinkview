@@ -91,7 +91,7 @@ class ThinkRecord:
     "astrbot_plugin_thinkview",
     "Inoryu7z",
     "查看 bot 的思考记录，支持中转群配置",
-    "1.2.0",
+    "1.2.1",
     repo="https://github.com/Inoryu7z/astrbot_plugin_thinkview",
 )
 class ThinkViewPlugin(Star):
@@ -413,6 +413,17 @@ class ThinkViewPlugin(Star):
         yield event.plain_result(output)
 
     @staticmethod
+    def _validate_session_format(session_str: str) -> bool:
+        if not session_str:
+            return False
+        parts = session_str.split(":", 2)
+        if len(parts) != 3:
+            return False
+        if not parts[0] or not parts[1] or not parts[2]:
+            return False
+        return True
+
+    @staticmethod
     def _sanitize_message(msg: str) -> str:
         if not msg:
             return ""
@@ -502,6 +513,9 @@ class ThinkViewPlugin(Star):
         await self._relay_to_group(relay_session, output)
 
     async def _relay_to_group(self, session_str: str, text: str):
+        if not self._validate_session_format(session_str):
+            logger.warning(f"[ThinkView] 中转群 session 格式无效: {session_str}，期望格式: platform_id:MessageType:session_id")
+            return
         try:
             chain = MessageChain([Plain(text)])
             success = await self.context.send_message(session_str, chain)
