@@ -1,0 +1,83 @@
+{
+    "basic_conf": {
+        "description": "基础配置",
+        "hint": "控制思考记录的记录行为",
+        "type": "object",
+        "items": {
+            "record_level": {
+                "description": "记录层级",
+                "type": "string",
+                "default": "reasoning_only",
+                "hint": "reasoning_only: 仅记录 LLM 推理思考；reasoning_and_tools: 推理 + 工具调用摘要；full_agent_loop: 完整 Agent 循环记录",
+                "options": ["reasoning_only", "reasoning_and_tools", "full_agent_loop"]
+            },
+            "max_records": {
+                "description": "每个会话最大记录数",
+                "type": "int",
+                "default": 50,
+                "hint": "内存中保存的最近思考记录条数，超出后自动淘汰最旧的记录",
+                "slider": {
+                    "min": 10,
+                    "max": 200,
+                    "step": 10
+                }
+            }
+        }
+    },
+    "relay_conf": {
+        "description": "中转配置",
+        "hint": "配置思考内容的中转群聊",
+        "type": "object",
+        "items": {
+            "relay_session": {
+                "description": "中转群 session",
+                "type": "string",
+                "default": "",
+                "hint": "中转群的 session 字符串，格式如 aiocqhttp:GroupMessage:123456789，留空则不启用中转"
+            },
+            "auto_relay": {
+                "description": "自动转发思考内容",
+                "type": "bool",
+                "default": false,
+                "hint": "开启后，每次 bot 回复都会自动将思考内容转发到中转群；关闭时仅在 /think 命令触发时发送到中转群"
+            },
+            "relay_include_source": {
+                "description": "中转消息附带来源上下文",
+                "type": "bool",
+                "default": true,
+                "hint": "开启后，转发到中转群的消息会附带原始对话的来源信息（哪个群、用户问了什么）"
+            }
+        }
+    },
+    "display_conf": {
+        "description": "展示配置",
+        "hint": "控制 /think 命令输出的展示内容",
+        "type": "object",
+        "items": {
+            "show_user_message": {
+                "description": "展示用户消息摘要",
+                "type": "bool",
+                "default": true,
+                "hint": "在思考记录中展示触发该次思考的用户消息摘要"
+            },
+            "show_reply_summary": {
+                "description": "展示回复摘要",
+                "type": "bool",
+                "default": true,
+                "hint": "在思考记录中展示 bot 最终回复的摘要"
+            },
+            "show_timestamp": {
+                "description": "展示时间戳",
+                "type": "bool",
+                "default": true,
+                "hint": "在思考记录中展示思考发生的时间"
+            },
+            "show_session_source": {
+                "description": "展示会话来源",
+                "type": "bool",
+                "default": true,
+                "hint": "在思考记录中展示会话来源信息（哪个群/私聊）"
+            }
+        }
+    }
+}
