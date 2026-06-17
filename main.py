@@ -91,7 +91,7 @@ class ThinkRecord:
     "astrbot_plugin_thinkview",
     "Inoryu7z",
     "查看 bot 的思考记录，支持中转群配置",
-    "1.3.0",
+    "1.3.1",
     repo="https://github.com/Inoryu7z/astrbot_plugin_thinkview",
 )
 class ThinkViewPlugin(Star):
@@ -228,7 +228,10 @@ class ThinkViewPlugin(Star):
             self._pending_tools[interaction_id] = []
 
         args_str = str(tool_args)
-        args_summary = args_str[:_TRUNC_ARGS] + "..." if len(args_str) > _TRUNC_ARGS else args_str
+        if self._should_record_all:
+            args_summary = args_str
+        else:
+            args_summary = args_str[:_TRUNC_ARGS] + "..." if len(args_str) > _TRUNC_ARGS else args_str
 
         tool_name = getattr(tool, "name", str(tool))
 
@@ -248,7 +251,10 @@ class ThinkViewPlugin(Star):
             return
 
         result_str = str(tool_result)
-        result_summary = result_str[:_TRUNC_RESULT] + "..." if len(result_str) > _TRUNC_RESULT else result_str
+        if self._should_record_all:
+            result_summary = result_str
+        else:
+            result_summary = result_str[:_TRUNC_RESULT] + "..." if len(result_str) > _TRUNC_RESULT else result_str
 
         tool_name = getattr(tool, "name", str(tool))
         for entry in self._pending_tools[interaction_id]:
@@ -285,7 +291,10 @@ class ThinkViewPlugin(Star):
             reply_text = "".join(
                 comp.text for comp in result.chain if isinstance(comp, Plain)
             )
-            record.reply_summary = reply_text[:_TRUNC_REPLY] if reply_text else ""
+            if self._should_record_all:
+                record.reply_summary = reply_text
+            else:
+                record.reply_summary = reply_text[:_TRUNC_REPLY] if reply_text else ""
 
         if interaction_id in self._pending_tools:
             record.tool_calls = self._pending_tools.pop(interaction_id)
@@ -348,7 +357,7 @@ class ThinkViewPlugin(Star):
             await self._relay_to_group(relay_session, output)
             yield event.plain_result("思考记录已发送到中转群。")
         else:
-            if len(output) > _TRUNC_OUTPUT:
+            if not self._should_record_all and len(output) > _TRUNC_OUTPUT:
                 output = output[:_TRUNC_OUTPUT - 100] + "\n\n... (内容过长已截断)"
             yield event.plain_result(output)
 
@@ -382,7 +391,7 @@ class ThinkViewPlugin(Star):
             output_parts.append(self._format_record(record, idx, sanitize=not is_admin))
 
         output = "\n\n".join(output_parts)
-        if len(output) > _TRUNC_OUTPUT:
+        if not self._should_record_all and len(output) > _TRUNC_OUTPUT:
             output = output[:_TRUNC_OUTPUT - 100] + "\n\n... (内容过长已截断)"
         yield event.plain_result(output)
 
@@ -451,7 +460,7 @@ class ThinkViewPlugin(Star):
             await self._relay_to_group(relay_session, output)
             yield event.plain_result("搜索结果已发送到中转群。")
         else:
-            if len(output) > _TRUNC_OUTPUT:
+            if not self._should_record_all and len(output) > _TRUNC_OUTPUT:
                 output = output[:_TRUNC_OUTPUT - 100] + "\n\n... (内容过长已截断)"
             yield event.plain_result(output)
 
@@ -550,7 +559,7 @@ class ThinkViewPlugin(Star):
             if tool_text:
                 output += "\n" + tool_text
 
-        if len(output) > _TRUNC_OUTPUT:
+        if not self._should_record_all and len(output) > _TRUNC_OUTPUT:
             output = output[:_TRUNC_OUTPUT - 100] + "\n\n... (内容过长已截断)"
 
         await self._relay_to_group(relay_session, output)
