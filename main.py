@@ -91,7 +91,7 @@ class ThinkRecord:
     "astrbot_plugin_thinkview",
     "Inoryu7z",
     "查看 bot 的思考记录，支持中转群配置",
-    "1.3.1",
+    "1.3.2",
     repo="https://github.com/Inoryu7z/astrbot_plugin_thinkview",
 )
 class ThinkViewPlugin(Star):
@@ -218,6 +218,11 @@ class ThinkViewPlugin(Star):
             if interaction_id not in self._pending_tools:
                 self._pending_tools[interaction_id] = []
 
+        # agent 完成后（is_chunk=False）直接保存记录
+        # 修复流式模式下 after_message_sent 不触发导致记录丢失的问题
+        if not response.is_chunk:
+            await self._commit_record(interaction_id, response.completion_text or "")
+
     @filter.on_using_llm_tool()
     async def on_using_llm_tool(self, event: AstrMessageEvent, tool: Any, tool_args: Any):
         if not self._should_record_tools:
@@ -263,9 +268,8 @@ class ThinkViewPlugin(Star):
                 entry.result_matched = True
                 break
 
-    @filter.after_message_sent()
-    async def after_message_sent(self, event: AstrMessageEvent):
-        interaction_id = self._make_interaction_id(event)
+    async def _commit_record(self, interaction_id: str, reply_text: str = ""):
+        """确认并保存记录。从 on_llm_response（流式兼容）和 after_message_sent 两处调用。"""
         if interaction_id not in self._pending:
             return
 
@@ -286,15 +290,10 @@ class ThinkViewPlugin(Star):
 
         record.confirmed = True
 
-        result = event.get_result()
-        if result and result.chain:
-            reply_text = "".join(
-                comp.text for comp in result.chain if isinstance(comp, Plain)
-            )
-            if self._should_record_all:
-                record.reply_summary = reply_text
-            else:
-                record.reply_summary = reply_text[:_TRUNC_REPLY] if reply_text else ""
+        if self._should_record_all:
+            record.reply_summary = reply_text
+        else:
+            record.reply_summary = reply_text[:_TRUNC_REPLY] if reply_text else ""
 
         if interaction_id in self._pending_tools:
             record.tool_calls = self._pending_tools.pop(interaction_id)
@@ -309,6 +308,21 @@ class ThinkViewPlugin(Star):
 
         if relay_session and auto_relay:
             await self._relay_think_record(record)
+
+    @filter.after_message_sent()
+    async def after_message_sent(self, event: AstrMessageEvent):
+        """非流式模式下的 fallback。流式模式下 on_llm_response 已保存，此处跳过。"""
+        interaction_id = self._make_interaction_id(event)
+        if interaction_id not in self._pending:
+            return
+
+        reply_text = ""
+        result = event.get_result()
+        if result and result.chain:
+            reply_text = "".join(
+                comp.text for comp in result.chain if isinstance(comp, Plain)
+            )
+        await self._commit_record(interaction_id, reply_text)
 
     def _check_cooldown(self, session: str) -> int:
         now = time.time()

@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.3.2 — 2026-06-17
+
+### 🐛 Bug 修复
+- 🔧 修复流式响应模式下 `after_message_sent` 钩子不触发导致思考记录丢失的问题（改为在 `on_llm_response` 中 agent 完成后直接保存记录，`after_message_sent` 保留为非流式模式的 fallback）
+
 ## 1.3.1 — 2026-06-17
 
 ### 🐛 Bug 修复
