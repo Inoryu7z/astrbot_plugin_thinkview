@@ -8,19 +8,8 @@
                 "description": "记录层级",
                 "type": "string",
                 "default": "reasoning_only",
-                "hint": "reasoning_only: 仅记录 LLM 推理思考；reasoning_and_tools: 推理 + 工具调用摘要；full_agent_loop: 完整 Agent 循环记录",
-                "options": ["reasoning_only", "reasoning_and_tools", "full_agent_loop"]
-            },
-            "max_records": {
-                "description": "每个会话最大记录数",
-                "type": "int",
-                "default": 50,
-                "hint": "内存中保存的最近思考记录条数，超出后自动淘汰最旧的记录",
-                "slider": {
-                    "min": 10,
-                    "max": 200,
-                    "step": 10
-                }
+                "hint": "reasoning_only: 仅记录 LLM 推理思考；full_agent_loop: 完整 Agent 循环记录（含工具调用）",
+                "options": ["reasoning_only", "full_agent_loop"]
             }
         }
     },
@@ -82,7 +71,7 @@
                 "description": "强制本地输出",
                 "type": "bool",
                 "default": false,
-                "hint": "开启后，使用 /think 和 /think_search 指令获取的记录只会发送到当前对话，不转发到中转群；自动转发模式不受影响"
+                "hint": "开启后，使用 /think 指令获取的记录只会发送到当前对话，不转发到中转群；自动转发模式不受影响"
             }
         }
     }

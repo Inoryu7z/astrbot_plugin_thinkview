@@ -22,6 +22,7 @@ _MAX_QUERY_N = 20
 _PENDING_TTL = 300
 _PENDING_CLEANUP_THRESHOLD = 50
 _COOLDOWN_SECONDS = 10
+_MAX_RECORDS = 50
 _PERSIST_FILE = "think_records.json"
 
 
@@ -91,7 +92,7 @@ class ThinkRecord:
     "astrbot_plugin_thinkview",
     "Inoryu7z",
     "查看 bot 的思考记录，支持中转群配置",
-    "1.3.2",
+    "1.4.0",
     repo="https://github.com/Inoryu7z/astrbot_plugin_thinkview",
 )
 class ThinkViewPlugin(Star):
@@ -102,7 +103,7 @@ class ThinkViewPlugin(Star):
         self.relay_conf = self.config.get("relay_conf", {})
         self.display_conf = self.config.get("display_conf", {})
 
-        max_records = self.basic_conf.get("max_records", 50)
+        max_records = _MAX_RECORDS
         self._records: dict[str, deque[ThinkRecord]] = {}
         self._max_records = max(10, max_records)
 
@@ -120,10 +121,6 @@ class ThinkViewPlugin(Star):
     @property
     def _record_level(self) -> str:
         return self.basic_conf.get("record_level", "reasoning_only")
-
-    @property
-    def _should_record_tools(self) -> bool:
-        return self._record_level in ("reasoning_and_tools", "full_agent_loop")
 
     @property
     def _should_record_all(self) -> bool:
@@ -214,7 +211,7 @@ class ThinkViewPlugin(Star):
                 record.reasoning_content = response.reasoning_content
             record.has_thinking = True
 
-        if self._should_record_tools:
+        if self._should_record_all:
             if interaction_id not in self._pending_tools:
                 self._pending_tools[interaction_id] = []
 
@@ -225,7 +222,7 @@ class ThinkViewPlugin(Star):
 
     @filter.on_using_llm_tool()
     async def on_using_llm_tool(self, event: AstrMessageEvent, tool: Any, tool_args: Any):
-        if not self._should_record_tools:
+        if not self._should_record_all:
             return
 
         interaction_id = self._make_interaction_id(event)
@@ -248,7 +245,7 @@ class ThinkViewPlugin(Star):
 
     @filter.on_llm_tool_respond()
     async def on_llm_tool_respond(self, event: AstrMessageEvent, tool: Any, tool_args: Any, tool_result: Any):
-        if not self._should_record_tools:
+        if not self._should_record_all:
             return
 
         interaction_id = self._make_interaction_id(event)
@@ -279,7 +276,7 @@ class ThinkViewPlugin(Star):
         should_keep = False
         if self._should_record_all:
             should_keep = True
-        elif self._should_record_tools and (record.has_thinking or interaction_id in self._pending_tools):
+        elif self._should_record_all and (record.has_thinking or interaction_id in self._pending_tools):
             should_keep = True
         elif record.has_thinking:
             should_keep = True
@@ -333,7 +330,7 @@ class ThinkViewPlugin(Star):
         self._cooldowns[session] = now
         return 0
 
-    @filter.command("think", alias={"思考"})
+    @filter.command("think")
     async def think_command(self, event: AstrMessageEvent, n: int = 1):
         remaining = self._check_cooldown(event.unified_msg_origin)
         if remaining > 0:
@@ -375,7 +372,7 @@ class ThinkViewPlugin(Star):
                 output = output[:_TRUNC_OUTPUT - 100] + "\n\n... (内容过长已截断)"
             yield event.plain_result(output)
 
-    @filter.command("think_here", alias={"思考这里"})
+    @filter.command("think_here")
     async def think_here_command(self, event: AstrMessageEvent, n: int = 1):
         remaining = self._check_cooldown(event.unified_msg_origin)
         if remaining > 0:
@@ -408,75 +405,6 @@ class ThinkViewPlugin(Star):
         if not self._should_record_all and len(output) > _TRUNC_OUTPUT:
             output = output[:_TRUNC_OUTPUT - 100] + "\n\n... (内容过长已截断)"
         yield event.plain_result(output)
-
-    @filter.command("think_clear", alias={"清除思考"})
-    async def think_clear_command(self, event: AstrMessageEvent):
-        is_admin = event.is_admin()
-
-        if is_admin:
-            count = sum(len(v) for v in self._records.values())
-            self._records.clear()
-        else:
-            session = event.unified_msg_origin
-            session_records = self._get_session_records(session)
-            count = len(session_records)
-            session_records.clear()
-
-        self._save_records()
-        scope = "所有会话" if is_admin else "当前会话"
-        yield event.plain_result(f"已清除{scope}的 {count} 条思考记录。")
-
-    @filter.command("think_search", alias={"搜索思考"})
-    async def think_search_command(self, event: AstrMessageEvent, keyword: str = ""):
-        if not keyword:
-            yield event.plain_result("请提供搜索关键词，如: /think_search 关键词")
-            return
-
-        remaining = self._check_cooldown(event.unified_msg_origin)
-        if remaining > 0:
-            yield event.plain_result(f"命令冷却中，请 {remaining} 秒后再试。")
-            return
-
-        is_admin = event.is_admin()
-        keyword_lower = keyword.lower()
-
-        if is_admin:
-            all_records = []
-            for session_records in self._records.values():
-                all_records.extend(session_records)
-            all_records.sort(key=lambda r: r.timestamp, reverse=True)
-            source_records = all_records
-        else:
-            session_records = self._get_session_records(event.unified_msg_origin)
-            source_records = list(session_records)
-
-        matched = [
-            r for r in source_records
-            if keyword_lower in r.user_message.lower()
-            or keyword_lower in r.reasoning_content.lower()
-            or keyword_lower in r.reply_summary.lower()
-        ][:_MAX_QUERY_N]
-
-        if not matched:
-            yield event.plain_result(f"未找到包含「{keyword}」的思考记录。")
-            return
-
-        output_parts = []
-        for i, record in enumerate(reversed(matched), 1):
-            output_parts.append(self._format_record(record, i, sanitize=not is_admin))
-
-        output = "\n\n".join(output_parts)
-
-        force_local = self.display_conf.get("force_local_output", False)
-        relay_session = self.relay_conf.get("relay_session", "")
-
-        if relay_session and not force_local:
-            await self._relay_to_group(relay_session, output)
-            yield event.plain_result("搜索结果已发送到中转群。")
-        else:
-            if not self._should_record_all and len(output) > _TRUNC_OUTPUT:
-                output = output[:_TRUNC_OUTPUT - 100] + "\n\n... (内容过长已截断)"
-            yield event.plain_result(output)
 
     @staticmethod
     def _validate_session_format(session_str: str) -> bool:
