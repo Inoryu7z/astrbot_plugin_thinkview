@@ -92,7 +92,7 @@ class ThinkRecord:
     "astrbot_plugin_thinkview",
     "Inoryu7z",
     "查看 bot 的思考记录，支持中转群配置",
-    "1.4.0",
+    "1.3.2",
     repo="https://github.com/Inoryu7z/astrbot_plugin_thinkview",
 )
 class ThinkViewPlugin(Star):

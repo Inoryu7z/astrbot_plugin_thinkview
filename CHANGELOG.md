@@ -1,17 +1,15 @@
 # Changelog
 
-## 1.4.0 — 2026-06-17
+## 1.3.2 — 2026-06-17
+
+### 🐛 Bug 修复
+- 🔧 修复流式响应模式下 `after_message_sent` 钩子不触发导致思考记录丢失的问题（改为在 `on_llm_response` 中 agent 完成后直接保存记录，`after_message_sent` 保留为非流式模式的 fallback）
+- 🔧 修复 `full_agent_loop` 模式下工具调用参数、结果、回复摘要和总输出仍被截断的问题
 
 ### ✨ 优化
 - 🧹 精简命令：只保留 `/think` 和 `/think_here`，移除 `/think_clear`、`/think_search` 及所有别名
 - 🧹 移除 `reasoning_and_tools` 记录模式，只保留 `reasoning_only` 和 `full_agent_loop`
 - 🧹 最大记录数硬编码为 50，不再暴露为配置项
-- 🔧 合并 `_should_record_tools` 和 `_should_record_all` 为单一属性
-
-## 1.3.2 — 2026-06-17
-
-### 🐛 Bug 修复
-- 🔧 修复流式响应模式下 `after_message_sent` 钩子不触发导致思考记录丢失的问题（改为在 `on_llm_response` 中 agent 完成后直接保存记录，`after_message_sent` 保留为非流式模式的 fallback）
 
 ## 1.3.1 — 2026-06-17
 
