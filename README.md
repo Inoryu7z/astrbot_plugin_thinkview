@@ -24,10 +24,9 @@
 
 可选记录 Bot 在回复过程中调用了哪些工具、传了什么参数、得到了什么结果。
 
-支持三种记录层级：
+支持两种记录层级：
 - **reasoning_only**：仅记录有推理内容的交互（默认）
-- **reasoning_and_tools**：推理 + 工具调用摘要
-- **full_agent_loop**：完整 Agent 循环记录（包括无推理的简单回复）
+- **full_agent_loop**：完整 Agent 循环记录（包括无推理的简单回复与工具调用摘要）
 
 ### 📡 中转群转发
 
@@ -42,12 +41,10 @@
 
 ## 🎮 可用指令
 
-| 指令 | 别名 | 权限 | 说明 |
-|------|------|------|------|
-| `/think` | `/思考` | 所有人 | 查看最近的思考记录，支持 `/think 3` 查看最近 3 条 |
-| `/think_here` | `/思考这里` | 所有人 | 强制输出到当前对话，无视中转群配置，支持 `/think_here 3` |
-| `/think_clear` | `/清除思考` | 所有人 | 清除思考记录（普通用户仅清除当前会话，管理员清除全部） |
-| `/think_search` | `/搜索思考` | 所有人 | 按关键词搜索思考记录，如 `/think_search 天气` |
+| 指令 | 权限 | 说明 |
+|------|------|------|
+| `/think` | 所有人 | 查看最近的思考记录，支持 `/think 3` 查看最近 3 条 |
+| `/think_here` | 所有人 | 强制输出到当前对话，无视中转群配置，支持 `/think_here 3` |
 
 ---
 
@@ -57,8 +54,9 @@
 
 | 配置项 | 说明 | 默认值 |
 |--------|------|--------|
-| `record_level` | 记录层级：`reasoning_only` / `reasoning_and_tools` / `full_agent_loop` | `reasoning_only` |
-| `max_records` | 每个会话最大记录数 | `50` |
+| `record_level` | 记录层级：`reasoning_only` / `full_agent_loop` | `reasoning_only` |
+
+> 每个会话最大记录数硬编码为 50，不再暴露为配置项。
 
 ### 中转配置
 
@@ -83,12 +81,11 @@
 ## 📌 使用说明
 
 1. 仅当模型返回了 `reasoning_content` 时才会记录思考过程（`reasoning_only` 模式）。
-2. `reasoning_and_tools` 模式下，有推理内容或工具调用的交互会被记录。
-3. `full_agent_loop` 模式下，所有交互都会被记录。
-4. `/think` 命令最多返回 20 条记录，命令冷却时间为 10 秒。
-5. 中转群 session 格式示例：`aiocqhttp:GroupMessage:123456789`
-6. 非管理员查看时，用户消息会进行脱敏处理。
-7. 记录会持久化保存，重启 Bot 后不会丢失。
+2. `full_agent_loop` 模式下，所有交互都会被记录（含工具调用参数与结果摘要）。
+3. `/think` 命令最多返回 20 条记录，命令冷却时间为 10 秒。
+4. 中转群 session 格式示例：`aiocqhttp:GroupMessage:123456789`
+5. 非管理员查看时，用户消息会进行脱敏处理。
+6. 记录会持久化保存到 `think_records.json`，重启 Bot 后不会丢失。
 
 ---
 
