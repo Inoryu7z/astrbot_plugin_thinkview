@@ -14,8 +14,6 @@ from astrbot.api.provider import LLMResponse
 from astrbot.api.star import Context, Star, register
 
 _TRUNC_USER_MSG = 200
-_TRUNC_ARGS = 100
-_TRUNC_RESULT = 150
 _TRUNC_REPLY = 200
 _TRUNC_OUTPUT = 4000
 _MAX_QUERY_N = 20
@@ -24,6 +22,12 @@ _PENDING_CLEANUP_THRESHOLD = 50
 _COOLDOWN_SECONDS = 10
 _MAX_RECORDS = 50
 _PERSIST_FILE = "think_records.json"
+
+# reasoning_only 模式下仍需完整记录的工具（args/result 均不截断）
+_ALWAYS_RECORD_TOOLS = {"aiimg_generate"}
+
+# 中转群单条消息安全长度上限，超过则分段发送
+_RELAY_CHUNK_SIZE = 1800
 
 
 @dataclass
@@ -92,7 +96,7 @@ class ThinkRecord:
     "astrbot_plugin_thinkview",
     "Inoryu7z",
     "查看 bot 的思考记录，支持中转群配置",
-    "1.3.2",
+    "1.3.3",
     repo="https://github.com/Inoryu7z/astrbot_plugin_thinkview",
 )
 class ThinkViewPlugin(Star):
@@ -222,43 +226,36 @@ class ThinkViewPlugin(Star):
 
     @filter.on_using_llm_tool()
     async def on_using_llm_tool(self, event: AstrMessageEvent, tool: Any, tool_args: Any):
-        if not self._should_record_all:
+        tool_name = getattr(tool, "name", str(tool))
+
+        # reasoning_only 模式下仅记录白名单工具；full_agent_loop 模式记录全部
+        if not self._should_record_all and tool_name not in _ALWAYS_RECORD_TOOLS:
             return
 
         interaction_id = self._make_interaction_id(event)
         if interaction_id not in self._pending_tools:
             self._pending_tools[interaction_id] = []
 
-        args_str = str(tool_args)
-        if self._should_record_all:
-            args_summary = args_str
-        else:
-            args_summary = args_str[:_TRUNC_ARGS] + "..." if len(args_str) > _TRUNC_ARGS else args_str
-
-        tool_name = getattr(tool, "name", str(tool))
-
+        # 白名单工具与 full 模式均完整保留 args，不截断
         entry = ToolCallEntry(
             tool_name=tool_name,
-            args_summary=args_summary,
+            args_summary=str(tool_args),
         )
         self._pending_tools[interaction_id].append(entry)
 
     @filter.on_llm_tool_respond()
     async def on_llm_tool_respond(self, event: AstrMessageEvent, tool: Any, tool_args: Any, tool_result: Any):
-        if not self._should_record_all:
+        tool_name = getattr(tool, "name", str(tool))
+
+        if not self._should_record_all and tool_name not in _ALWAYS_RECORD_TOOLS:
             return
 
         interaction_id = self._make_interaction_id(event)
         if interaction_id not in self._pending_tools:
             return
 
-        result_str = str(tool_result)
-        if self._should_record_all:
-            result_summary = result_str
-        else:
-            result_summary = result_str[:_TRUNC_RESULT] + "..." if len(result_str) > _TRUNC_RESULT else result_str
-
-        tool_name = getattr(tool, "name", str(tool))
+        # 白名单工具与 full 模式均完整保留 result，不截断
+        result_summary = str(tool_result)
         for entry in self._pending_tools[interaction_id]:
             if entry.tool_name == tool_name and not entry.result_matched:
                 entry.result_summary = result_summary
@@ -276,9 +273,10 @@ class ThinkViewPlugin(Star):
         should_keep = False
         if self._should_record_all:
             should_keep = True
-        elif self._should_record_all and (record.has_thinking or interaction_id in self._pending_tools):
-            should_keep = True
         elif record.has_thinking:
+            should_keep = True
+        elif interaction_id in self._pending_tools and self._pending_tools[interaction_id]:
+            # reasoning_only 模式下有白名单工具调用（如 aiimg_generate）也保留
             should_keep = True
 
         if not should_keep:
@@ -501,19 +499,37 @@ class ThinkViewPlugin(Star):
             if tool_text:
                 output += "\n" + tool_text
 
-        if not self._should_record_all and len(output) > _TRUNC_OUTPUT:
-            output = output[:_TRUNC_OUTPUT - 100] + "\n\n... (内容过长已截断)"
-
         await self._relay_to_group(relay_session, output)
+
+    @staticmethod
+    def _split_text_for_relay(text: str, chunk_size: int) -> list[str]:
+        """按 chunk_size 拆分文本，尽量在换行符处切分以保持可读性。"""
+        if len(text) <= chunk_size:
+            return [text]
+        chunks = []
+        remaining = text
+        while len(remaining) > chunk_size:
+            cut = remaining.rfind("\n", 0, chunk_size)
+            if cut <= 0:
+                # 找不到换行符，硬切
+                cut = chunk_size
+            chunks.append(remaining[:cut])
+            remaining = remaining[cut:].lstrip("\n")
+        if remaining:
+            chunks.append(remaining)
+        return chunks
 
     async def _relay_to_group(self, session_str: str, text: str):
         if not self._validate_session_format(session_str):
             logger.warning(f"[ThinkView] 中转群 session 格式无效: {session_str}，期望格式: platform_id:MessageType:session_id")
             return
-        try:
-            chain = MessageChain([Plain(text)])
-            success = await self.context.send_message(session_str, chain)
-            if not success:
-                logger.warning(f"[ThinkView] 中转群发送失败，session: {session_str}")
-        except Exception as e:
-            logger.error(f"[ThinkView] 中转群发送异常: {e}")
+        chunks = self._split_text_for_relay(text, _RELAY_CHUNK_SIZE)
+        for i, chunk in enumerate(chunks):
+            try:
+                chain = MessageChain([Plain(chunk)])
+                success = await self.context.send_message(session_str, chain)
+                if not success:
+                    logger.warning(f"[ThinkView] 中转群发送失败（第 {i + 1}/{len(chunks)} 段），session: {session_str}")
+            except Exception as e:
+                logger.error(f"[ThinkView] 中转群发送异常（第 {i + 1}/{len(chunks)} 段）: {e}")
+                break
