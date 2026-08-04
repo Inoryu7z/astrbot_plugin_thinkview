@@ -4,7 +4,7 @@
 
 **1. ✨ reasoning_only 模式下展示 aiimg_generate**
 
-* 纯思维链模式下也会记录并展示 aiimg_generate 工具调用，args/result 完整不截断。
+* 纯思维链模式下也会记录并展示 aiimg_generate 工具调用，args 完整不截断，result 自动去除 base64 图片数据。
 
 **2. 🐛 修复中转群长消息发送超时**
 

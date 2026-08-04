@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import time
 import uuid
 from collections import deque
@@ -254,13 +255,29 @@ class ThinkViewPlugin(Star):
         if interaction_id not in self._pending_tools:
             return
 
-        # 白名单工具与 full 模式均完整保留 result，不截断
-        result_summary = str(tool_result)
+        # 白名单工具与 full 模式均完整保留 result，但需去除 base64 等长数据避免刷屏
+        result_summary = self._sanitize_tool_result(tool_name, str(tool_result))
         for entry in self._pending_tools[interaction_id]:
             if entry.tool_name == tool_name and not entry.result_matched:
                 entry.result_summary = result_summary
                 entry.result_matched = True
                 break
+
+    @staticmethod
+    def _sanitize_tool_result(tool_name: str, result_str: str) -> str:
+        """清洗工具返回结果，去除 base64 图片等长数据避免刷屏。"""
+        # 白名单工具（如 aiimg_generate）：在 ImageContent 处截断，只保留文本部分
+        if tool_name in _ALWAYS_RECORD_TOOLS:
+            idx = result_str.find("ImageContent(")
+            if idx > 0:
+                prefix = result_str[:idx].rstrip().rstrip(",").rstrip()
+                return prefix + ", ImageContent(...省略图片数据)]"
+        # 通用兜底：检测超长 base64 串并截断
+        match = re.search(r"[A-Za-z0-9+/=]{200,}", result_str)
+        if match:
+            pos = match.start()
+            return result_str[:pos].rstrip() + "... (base64 数据已省略)"
+        return result_str
 
     async def _commit_record(self, interaction_id: str, reply_text: str = ""):
         """确认并保存记录。从 on_llm_response（流式兼容）和 after_message_sent 两处调用。"""
